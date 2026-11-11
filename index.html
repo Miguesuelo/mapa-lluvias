@@ -238,7 +238,7 @@ async function loadStations(){
 let radarOverlay = null, radarUrl = null;
 function radarSources(){
   const list = [];
-  if (location.protocol.startsWith("http")) list.push("radar.kmz");
+  if (/^(localhost|127\.0\.0\.1|\[::1\]|192\.168\.)/.test(location.hostname)) list.push("radar.kmz"); // solo con servidor.py
   const p = store.get("radarProxy");
   if (p) list.push(p);
   return list;
@@ -246,7 +246,7 @@ function radarSources(){
 async function loadRadar(){
   if (!$("lyrRadar").checked) return;
   const sources = radarSources();
-  if (!sources.length){ $("radarTime").textContent = "requiere servidor.py o proxy"; return; }
+  if (!sources.length){ $("radarTime").textContent = "falta configurar el proxy"; return; }
   for (const src of sources){
     try{
       const r = await fetch(src + (src.includes("?") ? "&" : "?") + "t=" + Date.now(), {cache:"no-store"});
