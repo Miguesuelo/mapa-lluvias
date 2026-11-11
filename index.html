@@ -1,0 +1,388 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Lluvia Bogotá en vivo</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;700&display=swap">
+<style>
+/* Layout: mapa a pantalla completa + panel flotante (abajo en móvil, izquierda en escritorio) */
+:root{
+  --bg:#f3f6f8; --panel:#ffffffee; --fg:#14232e; --muted:#5b6e7b; --line:#d5dee4;
+  --accent:#0b6fa4; --me:#e2463b; --ok:#2e8b57;
+  --display:"Space Grotesk",system-ui,sans-serif; --body:"Inter",system-ui,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0d151b; --panel:#14202aee; --fg:#e4edf2; --muted:#93a7b4; --line:#26343f;
+  --accent:#4fb3e6; --me:#ff6b5f; --ok:#5cc489; color-scheme:dark}}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--body)}
+#map{position:fixed;inset:0}
+.panel{position:fixed;z-index:1000;left:max(12px,env(safe-area-inset-left));top:max(12px,env(safe-area-inset-top));
+  width:340px;max-width:calc(100% - 24px);max-height:calc(100% - 24px);overflow:auto;background:var(--panel);backdrop-filter:blur(8px);
+  border:1px solid var(--line);border-radius:12px;padding:14px 16px;display:flex;flex-direction:column;gap:12px;
+  box-shadow:0 6px 24px #0003}
+@media (max-width:640px){.panel{top:auto;bottom:max(12px,env(safe-area-inset-bottom));left:12px;right:12px;width:auto;max-height:48vh}}
+h1{font:700 18px/1.2 var(--display);margin:0;display:flex;align-items:center;gap:8px}
+h2{font:600 11px/1 var(--body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:0 0 6px}
+.live{width:9px;height:9px;border-radius:50%;background:var(--ok);box-shadow:0 0 0 0 var(--ok);animation:pulse 2s infinite}
+@keyframes pulse{70%{box-shadow:0 0 0 8px transparent}100%{box-shadow:0 0 0 0 transparent}}
+.sub{color:var(--muted);font-size:12px;margin:2px 0 0}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+button,a.btn{font:500 13px var(--body);border:1px solid var(--line);background:transparent;color:var(--fg);
+  padding:7px 11px;border-radius:8px;cursor:pointer;text-decoration:none}
+button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+button:focus-visible,a.btn:focus-visible,input:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+section.block{border-top:1px solid var(--line);padding-top:10px}
+.me{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-variant-numeric:tabular-nums}
+.me dt{color:var(--muted);font-size:12px;align-self:center}.me dd{margin:0;font-weight:500;min-width:0}
+.big{font:700 26px/1 var(--display)}
+.chip{display:inline-block;font-size:11px;font-weight:600;padding:2px 7px;border-radius:99px;background:var(--line);color:var(--fg)}
+.chip.rain{background:#1d5bff;color:#fff}.chip.alert{background:#e2463b;color:#fff}
+.layers{display:flex;flex-direction:column;gap:4px}
+.layers label{display:flex;gap:8px;align-items:center;font-size:13px}
+.legend{display:flex;flex-wrap:wrap;gap:8px;font-size:11px;color:var(--muted)}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:4px;vertical-align:-1px}
+.small{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+#spark{width:100%;height:46px;display:block}
+.status{font-size:12px;color:var(--muted);margin:0}
+.status.err{color:var(--me)}
+details{font-size:12px;color:var(--muted)}
+details input{width:100%;font:12px var(--body);padding:6px;border:1px solid var(--line);border-radius:6px;background:transparent;color:var(--fg);margin:6px 0}
+.leaflet-container{background:var(--bg)}
+.st{border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px #0006}
+.st.raining{animation:pulse 1.6s infinite}
+.st.stale{opacity:.45}
+@media (prefers-reduced-motion:reduce){.live,.st.raining{animation:none}}
+.leaflet-popup-content{font:13px/1.45 var(--body)}
+.leaflet-popup-content b{font-variant-numeric:tabular-nums}
+</style>
+</head>
+<body>
+<div id="map" role="application" aria-label="Mapa de lluvias de Bogotá"></div>
+
+<aside class="panel" aria-label="Controles">
+  <div>
+    <h1><span class="live" aria-hidden="true"></span>Lluvia Bogotá en vivo</h1>
+    <p class="sub">Pluviómetros y radar del Sistema de Alerta de Bogotá (IDIGER), con tu ubicación GPS.</p>
+  </div>
+
+  <div class="row">
+    <button id="locate" class="primary">📍 Mi ubicación</button>
+    <button id="follow" aria-pressed="false">Seguirme</button>
+    <a class="btn" href="https://app.sab.gov.co/sab/lluvias.htm" target="_blank" rel="noopener">SAB oficial ↗</a>
+  </div>
+
+  <section class="block">
+    <h2>Donde estás</h2>
+    <dl class="me">
+      <dt>Localidad</dt><dd id="myLoc">–</dd>
+      <dt>Coordenadas</dt><dd id="coords">–</dd>
+      <dt>Precisión GPS</dt><dd id="acc">–</dd>
+    </dl>
+  </section>
+
+  <section class="block">
+    <h2>Estación SAB más cercana</h2>
+    <dl class="me">
+      <dt>Estación</dt><dd id="nName">–</dd>
+      <dt>Distancia</dt><dd id="nDist">–</dd>
+      <dt>Acumulado hoy</dt><dd><span class="big" id="nAcc">–</span> mm <span id="nChip"></span></dd>
+      <dt>Última lectura</dt><dd id="nTime">–</dd>
+    </dl>
+  </section>
+
+  <section class="block">
+    <h2>Pronóstico en tu punto · próximas 2 h</h2>
+    <svg id="spark" viewBox="0 0 160 46" preserveAspectRatio="none" role="img" aria-label="Pronóstico de lluvia cada 15 minutos"></svg>
+    <p class="small">Modelo Open‑Meteo, mm cada 15 min.</p>
+  </section>
+
+  <section class="block layers">
+    <h2>Capas</h2>
+    <label><input type="checkbox" id="lyrSt" checked><span>Pluviómetros SAB (<span id="stCount">–</span>)</span></label>
+    <label><input type="checkbox" id="lyrRadar" checked><span>Radar SAB · <span class="small" id="radarTime">–</span></span></label>
+    <label><input type="checkbox" id="lyrLoc" checked> Límites de localidades</label>
+    <label><input type="checkbox" id="lyrRV"> Radar global RainViewer</label>
+    <div class="legend" aria-label="Leyenda del acumulado del día">
+      <span><i style="background:#9aa7b0"></i>0</span>
+      <span><i style="background:#3fa9f5"></i>≤10 mm</span>
+      <span><i style="background:#1d5bff"></i>10–30</span>
+      <span><i style="background:#7b2cff"></i>30–50</span>
+      <span><i style="background:#e2463b"></i>&gt;50</span>
+      <span>· late = lloviendo ahora</span>
+    </div>
+    <details>
+      <summary>Configurar radar</summary>
+      El radar del SAB no se puede leer directo desde el navegador. Abre la herramienta con <code>servidor.py</code>, o pega aquí la URL de tu proxy (Cloudflare Worker):
+      <input id="proxyUrl" type="url" placeholder="https://mi-proxy.workers.dev" autocomplete="off">
+      <button id="proxySave">Guardar</button>
+    </details>
+  </section>
+
+  <p class="status" id="status">Cargando…</p>
+</aside>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+"use strict";
+const SAB = "https://app.sab.gov.co/sab";
+const LOCALIDADES = "https://services1.arcgis.com/zJ4jVF39oWSBtlEo/arcgis/rest/services/Localidades_SAB/FeatureServer/0/query?where=1%3D1&outFields=locnombre&outSR=4326&geometryPrecision=5&maxAllowableOffset=0.0001&f=geojson";
+const BOGOTA = [4.65, -74.10];
+const STATIONS_MS = 60 * 1000;     // el SAB refresca estaciones cada minuto
+const RADAR_MS = 2 * 60 * 1000;    // el KMZ del radar cambia cada ~5 min
+const STALE_MIN = 60;              // lectura con más de 60 min = estación sin datos recientes
+
+const $ = id => document.getElementById(id);
+const store = { get(k){ try{ return localStorage.getItem(k); }catch{ return null; } }, set(k,v){ try{ localStorage.setItem(k,v); }catch{} } };
+const status = (msg, err) => { const s = $("status"); s.textContent = msg; s.className = "status" + (err ? " err" : ""); };
+const hhmm = d => d.toLocaleTimeString("es-CO", {hour:"2-digit", minute:"2-digit"});
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+// ---------- Mapa base ----------
+const dark = matchMedia("(prefers-color-scheme: dark)").matches;
+const map = L.map("map", {zoomControl:false}).setView(BOGOTA, 12);
+L.control.zoom({position:"topright"}).addTo(map);
+L.control.scale({imperial:false, position:"bottomright"}).addTo(map);
+L.tileLayer(`https://server.arcgisonline.com/ArcGIS/rest/services/${dark ? "Canvas/World_Dark_Gray_Base" : "World_Street_Map"}/MapServer/tile/{z}/{y}/{x}`, {
+  maxZoom: 20, maxNativeZoom: dark ? 16 : 19,
+  attribution: 'Mapa &copy; Esri, OpenStreetMap · Datos: <a href="https://app.sab.gov.co/sab/lluvias.htm">SAB‑IDIGER</a>'
+}).addTo(map);
+if (dark) L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}", {maxZoom:20, maxNativeZoom:16}).addTo(map);
+map.createPane("radar").style.zIndex = 350;
+map.createPane("loc").style.zIndex = 340;
+
+// ---------- Localidades ----------
+let locGeo = null;
+const locLayer = L.geoJSON(null, {pane:"loc", style:{color:dark ? "#7f97a6" : "#55707f", weight:1, fill:false, dashArray:"3 3"}}).addTo(map);
+async function loadLocalidades(){
+  try{
+    locGeo = await (await fetch(LOCALIDADES)).json();
+    locLayer.addData(locGeo);
+    locLayer.eachLayer(l => l.bindTooltip(titleCase(l.feature.properties.locnombre), {sticky:true}));
+    updateMyLocalidad();
+  }catch(e){ console.warn("localidades", e); }
+}
+const titleCase = s => String(s || "").toLowerCase().replace(/(^|\s)\S/g, c => c.toUpperCase());
+function inRing(pt, ring){ // ray casting, ring = [[lon,lat],...]
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++){
+    const [xi, yi] = ring[i], [xj, yj] = ring[j];
+    if ((yi > pt[1]) !== (yj > pt[1]) && pt[0] < (xj - xi) * (pt[1] - yi) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+function localidadAt(lat, lon){
+  if (!locGeo) return null;
+  for (const f of locGeo.features){
+    const g = f.geometry, polys = g.type === "Polygon" ? [g.coordinates] : g.coordinates;
+    for (const p of polys) if (inRing([lon, lat], p[0]) && !p.slice(1).some(h => inRing([lon, lat], h))) return titleCase(f.properties.locnombre);
+  }
+  return null;
+}
+
+// ---------- Pluviómetros SAB ----------
+let stations = [];
+const stLayer = L.layerGroup().addTo(map);
+function parseSabDate(s){ // "2026-11-11 15:37:00.0" en hora de Bogotá (UTC-5)
+  if (!s) return null;
+  const d = new Date(s.slice(0, 19).replace(" ", "T") + "-05:00");
+  return isNaN(d) ? null : d;
+}
+function accColor(mm){
+  if (!(mm > 0)) return "#9aa7b0";
+  if (mm <= 10) return "#3fa9f5";
+  if (mm <= 30) return "#1d5bff";
+  if (mm <= 50) return "#7b2cff";
+  return "#e2463b";
+}
+async function loadStations(){
+  const r = await fetch(`${SAB}/ServletTipoSensores`, {
+    method:"POST", body:new URLSearchParams({idtiposensor:"5"}), cache:"no-store"
+  });
+  if (!r.ok) throw new Error("SAB " + r.status);
+  const j = await r.json();
+  const now = Date.now();
+  stations = j.TipoSensores.filter(s => s.IDTIPOSENSOR === 5 && s.LATITUD && s.LONGITUD).map(s => {
+    const t = parseSabDate(s.FECHALECTURA);
+    return {
+      id: s.IDSENSOR, name: s.ESTACION, loc: titleCase(s.LOCALIDAD),
+      lat: +s.LATITUD, lon: +s.LONGITUD, acc: +s.ACUMULADODIA || 0, now: +s.VALORLECTURA || 0,
+      max5: +s.MAXIMO_ACUM || 0, time: t, stale: !t || (now - t) / 60000 > STALE_MIN
+    };
+  });
+  stLayer.clearLayers();
+  let raining = 0;
+  for (const s of stations){
+    const isRain = s.now > 0 && !s.stale;
+    if (isRain) raining++;
+    const size = isRain ? 18 : 14;
+    const icon = L.divIcon({className:"", iconSize:[size,size], iconAnchor:[size/2,size/2],
+      html:`<div class="st${isRain ? " raining" : ""}${s.stale ? " stale" : ""}" style="width:${size}px;height:${size}px;background:${accColor(s.acc)};${s.max5 >= 5 ? "border-color:#e2463b;" : ""}"></div>`});
+    L.marker([s.lat, s.lon], {icon, title: s.name})
+      .bindPopup(`<b>${esc(s.name)}</b><br>${esc(s.loc)}<br>
+        Acumulado hoy: <b>${s.acc.toFixed(1)} mm</b><br>
+        Última lectura: <b>${s.now.toFixed(1)} mm</b>${isRain ? " · lloviendo" : ""}<br>
+        ${s.time ? `${s.time.toLocaleDateString("es-CO")} ${hhmm(s.time)}` : "Sin fecha"}${s.stale ? " · <i>sin datos recientes</i>" : ""}`)
+      .addTo(stLayer);
+  }
+  $("stCount").textContent = stations.length;
+  updateNearest();
+  return raining;
+}
+
+// ---------- Radar SAB (KMZ del IDIGER/SIRE) ----------
+// El servidor del radar no envía cabeceras CORS: se lee a través de servidor.py (ruta ./radar.kmz) o de un proxy configurado.
+let radarOverlay = null, radarUrl = null;
+function radarSources(){
+  const list = [];
+  if (location.protocol.startsWith("http")) list.push("radar.kmz");
+  const p = store.get("radarProxy");
+  if (p) list.push(p);
+  return list;
+}
+async function loadRadar(){
+  if (!$("lyrRadar").checked) return;
+  const sources = radarSources();
+  if (!sources.length){ $("radarTime").textContent = "requiere servidor.py o proxy"; return; }
+  for (const src of sources){
+    try{
+      const r = await fetch(src + (src.includes("?") ? "&" : "?") + "t=" + Date.now(), {cache:"no-store"});
+      if (!r.ok) continue;
+      const zip = await JSZip.loadAsync(await r.arrayBuffer());
+      const kmlName = Object.keys(zip.files).find(n => n.endsWith(".kml"));
+      const kml = new DOMParser().parseFromString(await zip.file(kmlName).async("string"), "text/xml");
+      const q = sel => kml.getElementsByTagName(sel)[0]?.textContent.trim();
+      const bounds = [[+q("south"), +q("west")], [+q("north"), +q("east")]];
+      const png = await zip.file(q("href")).async("blob");
+      const url = URL.createObjectURL(png);
+      if (radarOverlay){ radarOverlay.setUrl(url); radarOverlay.setBounds(L.latLngBounds(bounds)); }
+      else radarOverlay = L.imageOverlay(url, bounds, {pane:"radar", opacity:.7, attribution:"Radar IDIGER"}).addTo(map);
+      if (radarUrl) URL.revokeObjectURL(radarUrl);
+      radarUrl = url;
+      const m = (q("name") || "").match(/-(\w{3} \w{3} \d+ [\d:]+ \d{4}) GMT/);
+      const t = m ? new Date(m[1] + " GMT") : null;
+      $("radarTime").textContent = t && !isNaN(t) ? hhmm(t) : "cargado";
+      return;
+    }catch(e){ console.warn("radar", src, e); }
+  }
+  $("radarTime").textContent = "no disponible";
+}
+$("lyrRadar").onchange = e => {
+  if (e.target.checked){ radarOverlay?.addTo(map); loadRadar(); }
+  else if (radarOverlay) map.removeLayer(radarOverlay);
+};
+$("proxyUrl").value = store.get("radarProxy") || "";
+$("proxySave").onclick = () => { store.set("radarProxy", $("proxyUrl").value.trim()); loadRadar(); };
+
+// ---------- RainViewer (opcional) ----------
+let rvLayer = null;
+$("lyrRV").onchange = async e => {
+  if (!e.target.checked){ rvLayer && map.removeLayer(rvLayer); return; }
+  try{
+    const j = await (await fetch("https://api.rainviewer.com/public/weather-maps.json")).json();
+    const f = j.radar.past.at(-1);
+    rvLayer && map.removeLayer(rvLayer);
+    rvLayer = L.tileLayer(`${j.host}${f.path}/256/{z}/{x}/{y}/2/1_1.png`, {pane:"radar", opacity:.6, maxNativeZoom:7, maxZoom:20, attribution:"RainViewer"}).addTo(map);
+  }catch(err){ status("RainViewer no disponible", true); }
+};
+$("lyrSt").onchange = e => e.target.checked ? stLayer.addTo(map) : map.removeLayer(stLayer);
+$("lyrLoc").onchange = e => e.target.checked ? locLayer.addTo(map) : map.removeLayer(locLayer);
+
+// ---------- Ubicación precisa (GPS) ----------
+let meMarker = null, meCircle = null, watchId = null, following = false, lastPos = null, nearLine = null;
+const meIcon = L.divIcon({className:"", iconSize:[22,22], iconAnchor:[11,11],
+  html:'<div style="width:22px;height:22px;border-radius:50%;background:#e2463b;border:3px solid #fff;box-shadow:0 0 0 2px #e2463b,0 2px 8px #0006"></div>'});
+
+function onPos(pos){
+  const {latitude:lat, longitude:lon, accuracy} = pos.coords;
+  const firstFix = !lastPos;
+  lastPos = [lat, lon];
+  if (!meMarker){
+    meMarker = L.marker(lastPos, {icon: meIcon, zIndexOffset: 1000}).addTo(map).bindPopup("Estás aquí");
+    meCircle = L.circle(lastPos, {radius: accuracy, color: "#e2463b", weight: 1, fillOpacity: .08}).addTo(map);
+  } else { meMarker.setLatLng(lastPos); meCircle.setLatLng(lastPos).setRadius(accuracy); }
+  $("acc").textContent = `± ${Math.round(accuracy)} m`;
+  $("coords").textContent = `${lat.toFixed(5)}, ${lon.toFixed(5)}`;
+  updateMyLocalidad(); updateNearest();
+  if (firstFix){ map.setView(lastPos, 15); loadPoint(); }
+  else if (following) map.panTo(lastPos);
+}
+function onPosErr(e){
+  const msg = {1:"Permiso de ubicación denegado. Actívalo en el navegador.", 2:"No se pudo obtener la ubicación.", 3:"La ubicación tardó demasiado."}[e.code] || e.message;
+  status(msg + (location.protocol === "file:" ? " Abre la herramienta con servidor.py o desde https." : ""), true);
+}
+function startGPS(){
+  if (!("geolocation" in navigator)) return status("Este navegador no tiene GPS.", true);
+  if (watchId === null) watchId = navigator.geolocation.watchPosition(onPos, onPosErr, {enableHighAccuracy:true, maximumAge:5000, timeout:20000});
+  if (lastPos) map.setView(lastPos, Math.max(map.getZoom(), 15));
+}
+$("locate").onclick = startGPS;
+$("follow").onclick = () => {
+  following = !following;
+  $("follow").setAttribute("aria-pressed", following);
+  $("follow").textContent = following ? "Siguiéndote ✓" : "Seguirme";
+  startGPS();
+};
+function updateMyLocalidad(){
+  if (!lastPos) return;
+  $("myLoc").textContent = localidadAt(...lastPos) || (locGeo ? "Fuera de Bogotá urbana" : "–");
+}
+function updateNearest(){
+  if (!lastPos || !stations.length) return;
+  const here = L.latLng(lastPos);
+  const fresh = stations.filter(s => !s.stale);
+  const pool = fresh.length ? fresh : stations;
+  let best = null, bestD = Infinity;
+  for (const s of pool){ const d = here.distanceTo([s.lat, s.lon]); if (d < bestD){ bestD = d; best = s; } }
+  if (!best) return;
+  $("nName").textContent = `${best.name} (${best.loc})`;
+  $("nDist").textContent = bestD < 1000 ? `${Math.round(bestD)} m` : `${(bestD / 1000).toFixed(1)} km`;
+  $("nAcc").textContent = best.acc.toFixed(1);
+  const raining = best.now > 0;
+  $("nChip").innerHTML = best.max5 >= 5 ? '<span class="chip alert">lluvia fuerte</span>' : raining ? '<span class="chip rain">lloviendo</span>' : '<span class="chip">sin lluvia</span>';
+  $("nTime").textContent = best.time ? hhmm(best.time) + (best.stale ? " · desactualizada" : "") : "–";
+  if (nearLine) nearLine.setLatLngs([here, [best.lat, best.lon]]);
+  else nearLine = L.polyline([here, [best.lat, best.lon]], {color:"#e2463b", weight:1.5, dashArray:"4 4", opacity:.8}).addTo(map);
+}
+
+// Pronóstico en tu punto exacto (Open-Meteo, sin clave)
+async function loadPoint(){
+  if (!lastPos) return;
+  const [lat, lon] = lastPos;
+  const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&minutely_15=precipitation&forecast_minutely_15=8&timezone=America%2FBogota`;
+  try{
+    const j = await (await fetch(url, {cache:"no-store"})).json();
+    drawSpark(j.minutely_15?.precipitation || [], j.minutely_15?.time || []);
+  }catch(e){ console.warn(e); $("spark").innerHTML = '<text x="0" y="26" font-size="9" style="fill:var(--muted)">Pronóstico no disponible ahora</text>'; }
+}
+function drawSpark(vals, times){
+  const svg = $("spark"), W = 160, H = 46, max = Math.max(1, ...vals);
+  const bw = W / Math.max(vals.length, 1);
+  svg.innerHTML = vals.map((v, i) => {
+    const h = Math.max(1.5, (v / max) * (H - 12));
+    const t = times[i] ? times[i].slice(11, 16) : "";
+    return `<rect x="${i*bw+1}" y="${H-10-h}" width="${bw-2}" height="${h}" rx="2" style="fill:${v > 0.05 ? accColor(v * 4 + 0.1) : "var(--line)"}"><title>${t}: ${v.toFixed(1)} mm</title></rect>` +
+           (i % 2 === 0 ? `<text x="${i*bw+1}" y="${H-1}" font-size="7" style="fill:var(--muted)">${t}</text>` : "");
+  }).join("");
+}
+
+// ---------- Ciclo de actualización ----------
+async function refreshStations(){
+  try{
+    const raining = await loadStations();
+    status(`Actualizado ${hhmm(new Date())} · ${raining ? raining + " estaciones con lluvia ahora" : "ninguna estación registra lluvia ahora"}`);
+  }catch(e){ console.warn(e); status("No se pudieron leer las estaciones del SAB. Reintentando en 1 min.", true); }
+}
+loadLocalidades();
+refreshStations(); loadRadar();
+setInterval(refreshStations, STATIONS_MS);
+setInterval(loadRadar, RADAR_MS);
+setInterval(loadPoint, 5 * 60 * 1000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden){ refreshStations(); loadRadar(); } });
+startGPS();
+</script>
+</body>
+</html>
