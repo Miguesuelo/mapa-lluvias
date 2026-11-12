@@ -38,6 +38,16 @@ section.block{border-top:1px solid var(--line);padding-top:10px}
 .me{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:0;font-variant-numeric:tabular-nums}
 .me dt{color:var(--muted);font-size:12px;align-self:center}.me dd{margin:0;font-weight:500;min-width:0}
 .big{font:700 26px/1 var(--display)}
+.head{display:flex;align-items:flex-start;gap:10px}
+.head-text{flex:1;min-width:0}
+button.icon{padding:6px;line-height:0;flex:none}
+button.icon svg{transition:transform .2s}
+.panel-body{display:flex;flex-direction:column;gap:12px}
+.panel.collapsed{gap:0;padding-block:10px}
+.panel.collapsed .panel-body{display:none}
+.panel.collapsed button.icon svg{transform:rotate(180deg)}
+.panel.collapsed .sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:640px){.panel.collapsed{max-height:none}button.icon svg{transform:rotate(180deg)}.panel.collapsed button.icon svg{transform:none}}
 .chip{display:inline-block;font-size:11px;font-weight:600;padding:2px 7px;border-radius:99px;background:var(--line);color:var(--fg)}
 .chip.rain{background:#1d5bff;color:#fff}.chip.alert{background:#e2463b;color:#fff}
 .layers{display:flex;flex-direction:column;gap:4px}
@@ -63,10 +73,17 @@ details input{width:100%;font:12px var(--body);padding:6px;border:1px solid var(
 <div id="map" role="application" aria-label="Mapa de lluvias de Bogotá"></div>
 
 <aside class="panel" aria-label="Controles">
-  <div>
-    <h1><span class="live" aria-hidden="true"></span>Lluvia Bogotá en vivo</h1>
-    <p class="sub">Pluviómetros y radar del Sistema de Alerta de Bogotá (IDIGER), con tu ubicación GPS.</p>
-  </div>
+  <header class="head">
+    <div class="head-text">
+      <h1><span class="live" aria-hidden="true"></span>Lluvia Bogotá en vivo</h1>
+      <p class="sub" id="summary">Pluviómetros y radar del Sistema de Alerta de Bogotá (IDIGER), con tu ubicación GPS.</p>
+    </div>
+    <button id="toggle" class="icon" aria-expanded="true" aria-controls="panelBody" title="Ocultar menú">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </header>
+
+  <div id="panelBody" class="panel-body">
 
   <div class="row">
     <button id="locate" class="primary">📍 Mi ubicación</button>
@@ -122,6 +139,7 @@ details input{width:100%;font:12px var(--body);padding:6px;border:1px solid var(
   </section>
 
   <p class="status" id="status">Cargando…</p>
+  </div>
 </aside>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -133,13 +151,37 @@ const LOCALIDADES = "https://services1.arcgis.com/zJ4jVF39oWSBtlEo/arcgis/rest/s
 const BOGOTA = [4.65, -74.10];
 const STATIONS_MS = 60 * 1000;     // el SAB refresca estaciones cada minuto
 const RADAR_MS = 2 * 60 * 1000;    // el KMZ del radar cambia cada ~5 min
-const STALE_MIN = 60;              // lectura con más de 60 min = estación sin datos recientes
+const STALE_MIN = 60;
+// Dirección del Cloudflare Worker que reenvía el radar (ver worker.js). Vacío = sin radar en GitHub Pages.
+const RADAR_PROXY = "";              // lectura con más de 60 min = estación sin datos recientes
 
 const $ = id => document.getElementById(id);
 const store = { get(k){ try{ return localStorage.getItem(k); }catch{ return null; } }, set(k,v){ try{ localStorage.setItem(k,v); }catch{} } };
-const status = (msg, err) => { const s = $("status"); s.textContent = msg; s.className = "status" + (err ? " err" : ""); };
+const status = (msg, err) => { const s = $("status"); s.textContent = msg; s.className = "status" + (err ? " err" : ""); if (typeof updateSummary === "function") updateSummary(); };
 const hhmm = d => d.toLocaleTimeString("es-CO", {hour:"2-digit", minute:"2-digit"});
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+// ---------- Menú plegable ----------
+const panel = document.querySelector(".panel");
+const INTRO = $("summary").textContent;
+function setCollapsed(c){
+  panel.classList.toggle("collapsed", c);
+  $("toggle").setAttribute("aria-expanded", String(!c));
+  $("toggle").title = c ? "Mostrar menú" : "Ocultar menú";
+  store.set("panelCollapsed", c ? "1" : "0");
+  updateSummary();
+}
+function updateSummary(){
+  const c = panel.classList.contains("collapsed");
+  if (!c){ $("summary").textContent = INTRO; return; }
+  const parts = [];
+  const loc = $("myLoc").textContent; if (loc && loc !== "–") parts.push(loc);
+  const acc = $("nAcc").textContent; if (acc && acc !== "–") parts.push(`${acc} mm hoy · ${$("nChip").textContent || ""}`.trim());
+  else parts.push($("status").textContent);
+  $("summary").textContent = parts.join(" · ");
+}
+$("toggle").onclick = () => setCollapsed(!panel.classList.contains("collapsed"));
+{ const saved = store.get("panelCollapsed"); setCollapsed(saved ? saved === "1" : matchMedia("(max-width:640px)").matches); }
 
 // ---------- Mapa base ----------
 const dark = matchMedia("(prefers-color-scheme: dark)").matches;
@@ -239,7 +281,7 @@ let radarOverlay = null, radarUrl = null;
 function radarSources(){
   const list = [];
   if (/^(localhost|127\.0\.0\.1|\[::1\]|192\.168\.)/.test(location.hostname)) list.push("radar.kmz"); // solo con servidor.py
-  const p = store.get("radarProxy");
+  const p = store.get("radarProxy") || new URLSearchParams(location.search).get("proxy") || RADAR_PROXY;
   if (p) list.push(p);
   return list;
 }
@@ -344,6 +386,7 @@ function updateNearest(){
   const raining = best.now > 0;
   $("nChip").innerHTML = best.max5 >= 5 ? '<span class="chip alert">lluvia fuerte</span>' : raining ? '<span class="chip rain">lloviendo</span>' : '<span class="chip">sin lluvia</span>';
   $("nTime").textContent = best.time ? hhmm(best.time) + (best.stale ? " · desactualizada" : "") : "–";
+  updateSummary();
   if (nearLine) nearLine.setLatLngs([here, [best.lat, best.lon]]);
   else nearLine = L.polyline([here, [best.lat, best.lon]], {color:"#e2463b", weight:1.5, dashArray:"4 4", opacity:.8}).addTo(map);
 }
