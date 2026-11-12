@@ -13,9 +13,12 @@
   --accent:#0b6fa4; --me:#e2463b; --ok:#2e8b57;
   --display:"Space Grotesk",system-ui,sans-serif; --body:"Inter",system-ui,sans-serif;
 }
-@media (prefers-color-scheme:dark){:root{
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
   --bg:#0d151b; --panel:#14202aee; --fg:#e4edf2; --muted:#93a7b4; --line:#26343f;
   --accent:#4fb3e6; --me:#ff6b5f; --ok:#5cc489; color-scheme:dark}}
+:root[data-theme="dark"]{
+  --bg:#0d151b; --panel:#14202aee; --fg:#e4edf2; --muted:#93a7b4; --line:#26343f;
+  --accent:#4fb3e6; --me:#ff6b5f; --ok:#5cc489; color-scheme:dark}
 *{box-sizing:border-box}
 html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 var(--body)}
 #map{position:fixed;inset:0}
@@ -41,6 +44,7 @@ section.block{border-top:1px solid var(--line);padding-top:10px}
 .head{display:flex;align-items:flex-start;gap:10px}
 .head-text{flex:1;min-width:0}
 button.icon{padding:6px;line-height:0;flex:none}
+button.theme{width:32px;height:32px;padding:0;line-height:1;font-size:16px}
 button.icon svg{transition:transform .2s}
 .panel-body{display:flex;flex-direction:column;gap:12px}
 .panel.collapsed{gap:0;padding-block:10px}
@@ -78,6 +82,7 @@ details input{width:100%;font:12px var(--body);padding:6px;border:1px solid var(
       <h1><span class="live" aria-hidden="true"></span>Lluvia Bogotá en vivo</h1>
       <p class="sub" id="summary">Pluviómetros y radar del Sistema de Alerta de Bogotá (IDIGER), con tu ubicación GPS.</p>
     </div>
+    <button id="theme" class="icon theme" aria-label="Tema">◐</button>
     <button id="toggle" class="icon" aria-expanded="true" aria-controls="panelBody" title="Ocultar menú">
       <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 15l6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
@@ -184,15 +189,41 @@ $("toggle").onclick = () => setCollapsed(!panel.classList.contains("collapsed"))
 { const saved = store.get("panelCollapsed"); setCollapsed(saved ? saved === "1" : matchMedia("(max-width:640px)").matches); }
 
 // ---------- Mapa base ----------
-const dark = matchMedia("(prefers-color-scheme: dark)").matches;
 const map = L.map("map", {zoomControl:false}).setView(BOGOTA, 12);
 L.control.zoom({position:"topright"}).addTo(map);
 L.control.scale({imperial:false, position:"bottomright"}).addTo(map);
-L.tileLayer(`https://server.arcgisonline.com/ArcGIS/rest/services/${dark ? "Canvas/World_Dark_Gray_Base" : "World_Street_Map"}/MapServer/tile/{z}/{y}/{x}`, {
-  maxZoom: 20, maxNativeZoom: dark ? 16 : 19,
-  attribution: 'Mapa &copy; Esri, OpenStreetMap · Datos: <a href="https://app.sab.gov.co/sab/lluvias.htm">SAB‑IDIGER</a>'
-}).addTo(map);
-if (dark) L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}", {maxZoom:20, maxNativeZoom:16}).addTo(map);
+const ESRI = "https://server.arcgisonline.com/ArcGIS/rest/services/";
+const ATTR = 'Mapa &copy; Esri, OpenStreetMap · Datos: <a href="https://app.sab.gov.co/sab/lluvias.htm">SAB‑IDIGER</a>';
+const baseLight = L.tileLayer(ESRI + "World_Street_Map/MapServer/tile/{z}/{y}/{x}", {maxZoom:20, maxNativeZoom:19, attribution:ATTR});
+const baseDark = L.layerGroup([
+  L.tileLayer(ESRI + "Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", {maxZoom:20, maxNativeZoom:16, attribution:ATTR}),
+  L.tileLayer(ESRI + "Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}", {maxZoom:20, maxNativeZoom:16})
+]);
+
+// ---------- Tema: automático / claro / oscuro ----------
+const THEMES = {auto:{icon:"◐", label:"automático"}, light:{icon:"☀", label:"claro"}, dark:{icon:"☾", label:"oscuro"}};
+const sysDark = matchMedia("(prefers-color-scheme: dark)");
+let themePref = THEMES[store.get("theme")] ? store.get("theme") : "auto";
+let dark = false;
+function applyTheme(){
+  if (themePref === "auto") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", themePref);
+  dark = themePref === "dark" || (themePref === "auto" && sysDark.matches);
+  map.removeLayer(dark ? baseLight : baseDark);
+  (dark ? baseDark : baseLight).addTo(map);
+  try{ locLayer.setStyle({color: dark ? "#7f97a6" : "#55707f"}); }catch{} // aún no existe en la primera llamada
+  const t = THEMES[themePref], next = {auto:"light", light:"dark", dark:"auto"}[themePref];
+  $("theme").textContent = t.icon;
+  $("theme").title = `Tema ${t.label}. Clic para cambiar a ${THEMES[next].label}`;
+  $("theme").setAttribute("aria-label", $("theme").title);
+}
+$("theme").onclick = () => {
+  themePref = {auto:"light", light:"dark", dark:"auto"}[themePref];
+  store.set("theme", themePref);
+  applyTheme();
+};
+sysDark.addEventListener("change", () => { if (themePref === "auto") applyTheme(); });
+applyTheme();
 map.createPane("radar").style.zIndex = 350;
 map.createPane("loc").style.zIndex = 340;
 
