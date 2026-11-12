@@ -153,7 +153,7 @@ const STATIONS_MS = 60 * 1000;     // el SAB refresca estaciones cada minuto
 const RADAR_MS = 2 * 60 * 1000;    // el KMZ del radar cambia cada ~5 min
 const STALE_MIN = 60;
 // Dirección del Cloudflare Worker que reenvía el radar (ver worker.js). Vacío = sin radar en GitHub Pages.
-const RADAR_PROXY = "";              // lectura con más de 60 min = estación sin datos recientes
+const RADAR_PROXY = "https://frosty-tooth-bb7dradar-sab.brayan-molinap.workers.dev/";              // lectura con más de 60 min = estación sin datos recientes
 
 const $ = id => document.getElementById(id);
 const store = { get(k){ try{ return localStorage.getItem(k); }catch{ return null; } }, set(k,v){ try{ localStorage.setItem(k,v); }catch{} } };
